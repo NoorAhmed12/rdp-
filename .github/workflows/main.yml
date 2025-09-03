@@ -1,45 +1,22 @@
-name: Windows 11 RDP with Max Resources
+name: Windows 11 RDP - Max Resources Auto
 on:
   workflow_dispatch:
-    # إضافة مدخلات لتخصيص الجلسة قبل تشغيلها
-    inputs:
-      runner_size:
-        description: 'Choose VM Size (Resources)'
-        required: true
-        default: '2xlarge'
-        type: choice
-        options:
-        - standard-2cores # 7GB RAM, 2 vCPUs (الافتراضي للمستودعات العامة)
-        - large           # 7GB RAM, 2 vCPUs
-        - xl              # 14GB RAM, 4 vCPUs
-        - 2xlarge         # 16GB RAM, 4 vCPUs (أقصى موارد)
-      session_duration:
-        description: 'Session Duration in Hours (Max 36 for 2xlarge, 72 for others)'
-        required: true
-        default: '6'
-        type: choice
-        options:
-        - '6'
-        - '12'
-        - '24'
-        - '36'
-        - '60'
-        - '72'
 
 jobs:
   secure-rdp:
-    # استخدام أحدث بيئة ويندوز (Windows Server 2022) وتحديد الحجم من المدخلات
-    runs-on: ${{ format('{0}-{1}', 'windows-latest', inputs.runner_size) }}
+    # --- الإعدادات التلقائية لأقصى أداء ---
+    # استخدام أقوى جهاز متاح: 16GB RAM, 4 vCPUs
+    runs-on: windows-latest-2xlarge
     
-    # حساب مدة التشغيل بالدقائق بناءً على مدخلات المستخدم
-    timeout-minutes: ${{ fromJson(inputs.session_duration) * 60 }}
+    # تعيين أقصى مدة تشغيل: 36 ساعة (الحد الأقصى لحجم 2xlarge)
+    timeout-minutes: 2160 # 36 ساعة * 60 دقيقة = 2160 دقيقة
 
     steps:
       - name: Configure Core RDP Settings
         run: |
           # Enable Remote Desktop with more secure settings
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          # Enable Network Level Authentication for better security (can be disabled if needed)
+          # Enable Network Level Authentication for better security
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 2 -Force
           
@@ -94,7 +71,7 @@ jobs:
               exit 1
           }
           
-          # Bring up Tailscale with a unique hostname and disable key expiry for the session
+          # Bring up Tailscale with a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-runner-$env:GITHUB_RUN_ID --reset --accept-routes
           
           # Wait for Tailscale to assign an IP
@@ -144,7 +121,6 @@ jobs:
           Write-Host "Free Disk Space (C:): $($freeSpace.'Free(GB)') GB"
           Write-Host "=========================`n"
 
-      # هذه هي الخطوة الرئيسية التي تعرض المعلومات وتحافظ على الجلسة
       - name: Maintain Connection and Display RDP Info
         run: |
           # استخراج كلمة المرور بشكل نظيف من المتغير
@@ -156,13 +132,13 @@ jobs:
           Write-Host "   👤 Username: RDP" -ForegroundColor White
           Write-Host "   🔑 Password: $password" -ForegroundColor White
           Write-Host "   🌐 Address: $($env:TAILSCALE_IP)" -ForegroundColor White
-          Write-Host "   ⏱️  Duration: ${{ inputs.session_duration }} Hours" -ForegroundColor White
+          Write-Host "   ⏱️  Duration: 36 Hours (Max for this VM size)" -ForegroundColor White
           Write-Host "================================================" -ForegroundColor Yellow
-          Write-Host "ℹ️  Use any RDP client to connect. This session will automatically terminate after the specified duration or if you cancel the workflow." -ForegroundColor Cyan
+          Write-Host "ℹ️  Use any RDP client to connect. This session will automatically terminate after 36 hours or if you cancel the workflow." -ForegroundColor Cyan
           Write-Host "`n"
           
-          # الحفاظ على تشغيل السير عمل
-          $endTime = (Get-Date).AddHours([int]${{ inputs.session_duration }})
+          # الحفاظ على تشغيل السير عمل مع عد تنازلي
+          $endTime = (Get-Date).AddHours(36)
           while ($true) {
               $remainingTime = $endTime - (Get-Date)
               if ($remainingTime.TotalSeconds -le 0) {
