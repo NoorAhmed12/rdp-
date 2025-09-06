@@ -39,27 +39,40 @@ jobs:
 
       - name: Install Tailscale
         run: |
-          # Fixed package name (corrected spelling)
-          TS_URL="https://pkgs.tailscale.com/stable/tailscale-macos-latest.pkg"
-          INSTALLER_PATH="/tmp/tailscale.pkg"  # Corrected path
+          # استخدام الرابط الصحيح من الموقع الرسمي
+          TS_URL="https://pkgs.tailscale.com/stable/Tailscale-universal.pkg"
+          INSTALLER_PATH="/tmp/tailscale.pkg"
           
-          curl -o "$INSTALLER_PATH" "$TS_URL"
-          
-          # Verify download was successful
-          if [ ! -f "$INSTALLER_PATH" ]; then
-              echo "Error: Failed to download Tailscale package"
+          # تحميل الحزمة مع التحقق من النجاح
+          if ! curl -f -L -o "$INSTALLER_PATH" "$TS_URL"; then
+              echo "فشل في تحميل حزمة Tailscale"
               exit 1
           fi
           
+          # التحقق من وجود الحزمة وحجمها
+          if [ ! -f "$INSTALLER_PATH" ]; then
+              echo "لم يتم إنشاء ملف الحزمة"
+              exit 1
+          fi
+          
+          FILE_SIZE=$(stat -f%z "$INSTALLER_PATH")
+          if [ "$FILE_SIZE" -lt 1000000 ]; then
+              echo "حجم الملف صغير جداً، قد يكون التحميل فاشلاً"
+              exit 1
+          fi
+          
+          # تثبيت الحزمة
           sudo installer -pkg "$INSTALLER_PATH" -target /
           rm -f "$INSTALLER_PATH"
 
       - name: Establish Tailscale Connection
         run: |
+          # تشغيل Tailscale بمفتاح المصادقة
           sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
             --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
+          # الانتظار حتى يتم تعيين IP
           TS_IP=""
           RETRIES=0
           while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
@@ -69,38 +82,40 @@ jobs:
           done
           
           if [ -z "$TS_IP" ]; then
-              echo "Failed to get Tailscale IP"
+              echo "لم يتم تعيين عنوان IP من Tailscale. الخروج."
               exit 1
           fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
       
       - name: Verify RDP Accessibility
         run: |
-          echo "Tailscale IP: $TAILSCALE_IP"
+          echo "عنوان Tailscale IP: $TAILSCALE_IP"
           
-          # Install netcat if not present
+          # تثبيت netcat إذا لم يكن موجوداً
           if ! command -v nc &> /dev/null; then
               brew install netcat || true
           fi
           
           if nc -z -w 5 "$TAILSCALE_IP" 3389; then
-              echo "RDP connection successful!"
+              echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
           else
-              echo "Warning: RDP connection failed"
+              echo "تحذير: فشل الاتصال TCP على منفذ RDP 3389"
           fi
 
       - name: Maintain Connection
         run: |
-          echo "=== Remote Access Details ==="
-          echo "Address: $TAILSCALE_IP"
-          echo "System: macOS"
-          echo "Protocol: RDP (port 3389)"
-          echo "Username: $REMOTE_USERNAME"
-          echo "Password: $REMOTE_PASSWORD"
-          echo "============================="
+          echo ""
+          echo "=== الوصول عن بعد ==="
+          echo "العنوان: $TAILSCALE_IP"
+          echo "النظام: macOS"
+          echo "البروتوكول: RDP (منفذ 3389)"
+          echo "اسم المستخدم: $REMOTE_USERNAME"
+          echo "كلمة المرور: $REMOTE_PASSWORD"
+          echo "=================="
+          echo ""
           
-          # Keep the runner active
+          # إبقاء العدّاد نشطاً
           while true; do
-              echo "[$(date)] Connection active - Use Ctrl+C in workflow to terminate"
+              echo "[$(date)] الاتصال نشط - استخدم Ctrl+C في سير العمل للإنهاء"
               sleep 300
           done
