@@ -58,15 +58,18 @@ jobs:
 
       - name: Establish Tailscale Connection
         run: |
-          # تشغيل Tailscale بمفتاح المصادقة (تم تصحيح الأخطاء الإملائية)
+          # الانتظار قليلاً لضمان أن Tailscale قد بدأ
+          sleep 10
+
+          # تشغيل Tailscale بمفتاح المصادقة
           sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
             --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
-          # الانتظار حتى يتم تعيين IP (تم تصحيح الأخطاء)
+          # الانتظار حتى يتم تعيين IP
           TS_IP=""
           RETRIES=0
-          MAX_RETRIES=30  # زيادة عدد المحاولات
+          MAX_RETRIES=30
           
           while [ -z "$TS_IP" ] && [ $RETRIES -lt $MAX_RETRIES ]; do
               TS_IP=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo "")
