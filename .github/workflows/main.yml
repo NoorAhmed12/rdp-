@@ -9,30 +9,32 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Enable Screen Sharing (VNC)
+      - name: Configure Remote Desktop (RDP)
         run: |
-          # تمكين مشاركة الشاشة (VNC)
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+          # تمكين مشاركة الشاشة عبر RDP
+          sudo systemsetup -setremotelogin on
           
-          # تكوين إعدادات VNC
-          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          # تكوين إعدادات RDP
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
+            -dict-add UseRemoteManagement -bool true
           
-          # السماح بالوصول لكافة المستخدمين (لأغراض الاختبار)
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -allowAccessFor -allUsers -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "Yaso1212"
+          # السماح لجميع المستخدمين
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -allowAccessFor -allUsers -privs -all
 
-      - name: Configure Firewall
+      - name: Configure Firewall for RDP
         run: |
-          # فتح منفذ VNC (5900)
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 5900 --tcp --allow
+          # فتح منفذ RDP (3389)
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 3389 --tcp --allow
           
           # إعادة تحميل إعدادات الجدار الناري
           sudo pkill -HUP socketfilterfw
 
-      - name: Create User with Static Credentials
+      - name: Create User with Secure Password
         run: |
-          # بيانات الاعتماد الثابتة
+          # إنشاء كلمة مرور عشوائية آمنة
+          PASSWORD=$(openssl rand -base64 32 | tr -d '/+' | cut -c1-16)
           USERNAME="macuser"
-          PASSWORD="Yaso1212" # يرجى تغيير هذه كلمة المرور لشيء أكثر أماناً
           
           # إنشاء المستخدم إذا لم يكن موجوداً
           if ! id "$USERNAME" &>/dev/null; then
@@ -61,7 +63,9 @@ jobs:
       - name: Establish Tailscale Connection
         run: |
           # تشغيل Tailscale بمفتاح المصادقة
-          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner-$GITHUB_RUN_ID
+          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+            --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
           # الانتظار حتى يتم تعيين IP
           TS_IP=""
@@ -78,15 +82,15 @@ jobs:
           fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
       
-      - name: Verify Remote Accessibility
+      - name: Verify RDP Accessibility
         run: |
           echo "عنوان Tailscale IP: $TAILSCALE_IP"
           
-          # اختبار الاتصال على منفذ VNC 5900
-          if nc -z -w 5 "$TAILSCALE_IP" 5900; then
-              echo "تم الاتصال TCP على منفذ VNC 5900 بنجاح!"
+          # اختبار الاتصال على منفذ RDP 3389
+          if nc -z -w 5 "$TAILSCALE_IP" 3389; then
+              echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
           else
-              echo "تحذير: فشل الاتصال TCP على منفذ VNC 5900"
+              echo "تحذير: فشل الاتصال TCP على منفذ RDP 3389"
           fi
 
       - name: Maintain Connection
@@ -95,10 +99,9 @@ jobs:
           echo "=== الوصول عن بعد ==="
           echo "العنوان: $TAILSCALE_IP"
           echo "النظام: macOS"
-          echo "البروتوكول: VNC (منفذ 5900)"
+          echo "البروتوكول: RDP (منفذ 3389)"
           echo "اسم المستخدم: $REMOTE_USERNAME"
           echo "كلمة المرور: $REMOTE_PASSWORD"
-          echo "كلمة مرور VNC: $REMOTE_PASSWORD"
           echo "=================="
           echo ""
           
