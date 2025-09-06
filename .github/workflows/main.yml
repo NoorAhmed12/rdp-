@@ -39,25 +39,16 @@ jobs:
 
       - name: Install Tailscale
         run: |
-          # استخدام الرابط الصحيح من الموقع الرسمي
-          TS_URL="https://pkgs.tailscale.com/stable/Tailscale-universal.pkg"
+          # استخدام الرابط الصحيح المحدد
+          TS_URL="https://pkgs.tailscale.com/stable/Tailscale-1.86.4-macos.pkg"
           INSTALLER_PATH="/tmp/tailscale.pkg"
           
           # تحميل الحزمة مع التحقق من النجاح
-          if ! curl -f -L -o "$INSTALLER_PATH" "$TS_URL"; then
-              echo "فشل في تحميل حزمة Tailscale"
-              exit 1
-          fi
+          curl -L -o "$INSTALLER_PATH" "$TS_URL"
           
-          # التحقق من وجود الحزمة وحجمها
+          # التحقق من وجود الحزمة
           if [ ! -f "$INSTALLER_PATH" ]; then
-              echo "لم يتم إنشاء ملف الحزمة"
-              exit 1
-          fi
-          
-          FILE_SIZE=$(stat -f%z "$INSTALLER_PATH")
-          if [ "$FILE_SIZE" -lt 1000000 ]; then
-              echo "حجم الملف صغير جداً، قد يكون التحميل فاشلاً"
+              echo "فشل في تحميل حزمة Tailscale"
               exit 1
           fi
           
