@@ -24,17 +24,22 @@ jobs:
       - name: Configure Firewall for RDP
         run: |
           # فتح منفذ RDP (3389) باستخدام الطريقة الصحيحة
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 3389 --tcp
+          # الطريقة الصحيحة لفتح منفذ في جدار حماية macOS
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setallowsigned on
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setallowsignedapp on
           
-          # تمكين المنفذ في الجدار الناري
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockport 3389
+          # استخدام pfctl لفتح منفذ 3389 مباشرة (الطريقة الموصى بها)
+          echo " 
+            pass in proto tcp from any to any port 3389
+          " | sudo pfctl -ef -
           
           # إعادة تحميل إعدادات الجدار الناري
           sudo pkill -HUP socketfilterfw
 
       - name: Create User with Secure Password
         run: |
-          # استخدام كلمة المرور الثابتة كما طلب المستخدم
+          # استخدام كلمة المرور الثابتة
           PASSWORD="Yaso1212"
           USERNAME="macuser"
           
