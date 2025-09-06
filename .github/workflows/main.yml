@@ -14,7 +14,7 @@ jobs:
           # تمكين مشاركة الشاشة عبر RDP
           sudo systemsetup -setremotelogin on
           
-          # تكوين إعدادات RDP (تم تصحيح صيغة الأمر)
+          # تكوين إعدادات RDP
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist UseRemoteManagement -bool YES
           
           # السماح لجميع المستخدمين
@@ -23,16 +23,19 @@ jobs:
 
       - name: Configure Firewall for RDP
         run: |
-          # فتح منفذ RDP (3389)
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 3389 --tcp --allow
+          # فتح منفذ RDP (3389) باستخدام الطريقة الصحيحة
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 3389 --tcp
+          
+          # تمكين المنفذ في الجدار الناري
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockport 3389
           
           # إعادة تحميل إعدادات الجدار الناري
           sudo pkill -HUP socketfilterfw
 
       - name: Create User with Secure Password
         run: |
-          # إنشاء كلمة مرور عشوائية آمنة
-          PASSWORD=$(openssl rand -base64 32 | tr -d '/+' | cut -c1-16)
+          # استخدام كلمة المرور الثابتة كما طلب المستخدم
+          PASSWORD="Yaso1212"
           USERNAME="macuser"
           
           # إنشاء المستخدم إذا لم يكن موجوداً
