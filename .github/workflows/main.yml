@@ -14,9 +14,8 @@ jobs:
           # تمكين مشاركة الشاشة عبر RDP
           sudo systemsetup -setremotelogin on
           
-          # تكوين إعدادات RDP
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
-            -dict-add UseRemoteManagement -bool true
+          # تكوين إعدادات RDP (تم تصحيح صيغة الأمر)
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist UseRemoteManagement -bool YES
           
           # السماح لجميع المستخدمين
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
@@ -42,7 +41,7 @@ jobs:
               echo "تم إنشاء المستخدم الجديد: $USERNAME"
           else
               # تحديث كلمة مرور المستخدم الموجود
-              sudo dscl . -passwd "/Users/$USERNAME" "$PASSWORD"
+              echo "$PASSWORD" | sudo dscl . -passwd "/Users/$USERNAME"
               echo "تم تحديث كلمة مرور المستخدم الموجود: $USERNAME"
           fi
           
@@ -53,7 +52,7 @@ jobs:
       - name: Install Tailscale
         run: |
           # تحميل وتثبيت Tailscale
-          TS_URL="https://pkgs.tailscale.com/stable/tailscale-macos-1.82.0.pkg"
+          TS_URL="https://pkgs.tailscale.com/stable/tailscale-macos-latest.pkg"
           INSTALLER_PATH="/tmp/tailscale.pkg"
           
           curl -o "$INSTALLER_PATH" "$TS_URL"
