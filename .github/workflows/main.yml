@@ -1,110 +1,109 @@
-name: RDP
+name: macOS Remote Access
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
+  secure-remote:
+    runs-on: macos-latest
     timeout-minutes: 3600
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Enable Screen Sharing (VNC)
         run: |
-          # تمكين سطح المكتب البعيد وتعطيل مصادقة مستوى الشبكة
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # إزالة أي قاعدة حماية موجودة بنفس الاسم
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          # تمكين مشاركة الشاشة (VNC)
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
           
-          # السماح بأي اتصال وارد على منفذ 3389
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
+          # تكوين إعدادات VNC
+          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          
+          # السماح بالوصول لكافة المستخدمين (لأغراض الاختبار)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -allowAccessFor -allUsers -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "Yaso1212"
 
-          # إعادة تشغيل خدمة سطح المكتب البعيد
-          Restart-Service -Name TermService -Force
+      - name: Configure Firewall
+        run: |
+          # فتح منفذ VNC (5900)
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --addport 5900 --tcp --allow
+          
+          # إعادة تحميل إعدادات الجدار الناري
+          sudo pkill -HUP socketfilterfw
 
-      - name: Create RDP User with Static Credentials
+      - name: Create User with Static Credentials
         run: |
           # بيانات الاعتماد الثابتة
-          $username = "RDP"
-          $password = "Yaso1212" # يرجى تغيير هذه كلمة المرور لشيء أكثر أماناً
-          
-          # تحويل كلمة المرور إلى SecureString
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          USERNAME="macuser"
+          PASSWORD="Yaso1212" # يرجى تغيير هذه كلمة المرور لشيء أكثر أماناً
           
           # إنشاء المستخدم إذا لم يكن موجوداً
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member $username
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-              Write-Host "تم إنشاء المستخدم الجديد: $username"
-          } else {
+          if ! id "$USERNAME" &>/dev/null; then
+              sudo sysadminctl -addUser "$USERNAME" -password "$PASSWORD" -admin
+              echo "تم إنشاء المستخدم الجديد: $USERNAME"
+          else
               # تحديث كلمة مرور المستخدم الموجود
-              Set-LocalUser -Name $username -Password $securePass
-              Write-Host "تم تحديث كلمة مرور المستخدم الموجود: $username"
-          }
+              sudo dscl . -passwd "/Users/$USERNAME" "$PASSWORD"
+              echo "تم تحديث كلمة مرور المستخدم الموجود: $USERNAME"
+          fi
           
           # تخزين بيانات الاعتماد في متغيرات البيئة
-          echo "RDP_USERNAME=$username" >> $env:GITHUB_ENV
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          echo "REMOTE_USERNAME=$USERNAME" >> $GITHUB_ENV
+          echo "REMOTE_PASSWORD=$PASSWORD" >> $GITHUB_ENV
 
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
+          # تحميل وتثبيت Tailscale
+          TS_URL="https://pkgs.tailscale.com/stable/tailscale-macos-1.82.0.pkg"
+          INSTALLER_PATH="/tmp/tailscale.pkg"
           
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          curl -o "$INSTALLER_PATH" "$TS_URL"
+          sudo installer -pkg "$INSTALLER_PATH" -target /
+          rm -f "$INSTALLER_PATH"
 
       - name: Establish Tailscale Connection
         run: |
           # تشغيل Tailscale بمفتاح المصادقة
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
           # الانتظار حتى يتم تعيين IP
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
+          TS_IP=""
+          RETRIES=0
+          while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
+              TS_IP=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4)
+              sleep 5
+              RETRIES=$((RETRIES+1))
+          done
           
-          if (-not $tsIP) {
-              Write-Error "لم يتم تعيين عنوان IP من Tailscale. الخروج."
+          if [ -z "$TS_IP" ]; then
+              echo "لم يتم تعيين عنوان IP من Tailscale. الخروج."
               exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          fi
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
       
-      - name: Verify RDP Accessibility
+      - name: Verify Remote Accessibility
         run: |
-          Write-Host "عنوان Tailscale IP: $env:TAILSCALE_IP"
+          echo "عنوان Tailscale IP: $TAILSCALE_IP"
           
-          # اختبار الاتصال على منفذ 3389
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "فشل الاتصال TCP على منفذ RDP 3389"
-              exit 1
-          }
-          Write-Host "تم الاتصال TCP بنجاح!"
+          # اختبار الاتصال على منفذ VNC 5900
+          if nc -z -w 5 "$TAILSCALE_IP" 5900; then
+              echo "تم الاتصال TCP على منفذ VNC 5900 بنجاح!"
+          else
+              echo "تحذير: فشل الاتصال TCP على منفذ VNC 5900"
+          fi
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== الوصول عبر RDP ==="
-          Write-Host "العنوان: $env:TAILSCALE_IP"
-          Write-Host "اسم المستخدم: $env:RDP_USERNAME"
-          Write-Host "كلمة المرور: $env:RDP_PASSWORD"
-          Write-Host "==================`n"
+          echo ""
+          echo "=== الوصول عن بعد ==="
+          echo "العنوان: $TAILSCALE_IP"
+          echo "النظام: macOS"
+          echo "البروتوكول: VNC (منفذ 5900)"
+          echo "اسم المستخدم: $REMOTE_USERNAME"
+          echo "كلمة المرور: $REMOTE_PASSWORD"
+          echo "كلمة مرور VNC: $REMOTE_PASSWORD"
+          echo "=================="
+          echo ""
           
           # إبقاء العدّاد نشطاً
-          while ($true) {
-              Write-Host "[$(Get-Date)] RDP نشط - استخدم Ctrl+C في سير العمل للإنهاء"
-              Start-Sleep -Seconds 300
-          }
+          while true; do
+              echo "[$(date)] الاتصال نشط - استخدم Ctrl+C في سير العمل للإنهاء"
+              sleep 300
+          done
