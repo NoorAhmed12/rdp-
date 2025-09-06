@@ -58,24 +58,36 @@ jobs:
 
       - name: Establish Tailscale Connection
         run: |
-          # تشغيل Tailscale بمفتاح المصادقة
+          # تشغيل Tailscale بمفتاح المصادقة (تم تصحيح الأخطاء الإملائية)
           sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
             --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
-          # الانتظار حتى يتم تعيين IP
+          # الانتظار حتى يتم تعيين IP (تم تصحيح الأخطاء)
           TS_IP=""
           RETRIES=0
-          while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
-              TS_IP=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4)
-              sleep 5
+          MAX_RETRIES=30  # زيادة عدد المحاولات
+          
+          while [ -z "$TS_IP" ] && [ $RETRIES -lt $MAX_RETRIES ]; do
+              TS_IP=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo "")
+              
+              if [ -n "$TS_IP" ]; then
+                  break
+              fi
+              
+              echo "محاولة $((RETRIES+1))/$MAX_RETRIES: في انتظار عنوان IP من Tailscale..."
+              sleep 10
               RETRIES=$((RETRIES+1))
           done
           
           if [ -z "$TS_IP" ]; then
-              echo "لم يتم تعيين عنوان IP من Tailscale. الخروج."
+              echo "لم يتم تعيين عنوان IP من Tailscale بعد $MAX_RETRIES محاولة."
+              echo "التحقق من حالة Tailscale:"
+              /Applications/Tailscale.app/Contents/MacOS/Tailscale status
               exit 1
           fi
+          
+          echo "تم تعيين عنوان IP: $TS_IP"
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
       
       - name: Verify RDP Accessibility
@@ -87,10 +99,22 @@ jobs:
               brew install netcat || true
           fi
           
-          if nc -z -w 5 "$TAILSCALE_IP" 3389; then
-              echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
-          else
-              echo "تحذير: فشل الاتصال TCP على منفذ RDP 3389"
+          # إضافة عدد محاولات للاتصال
+          CONN_RETRIES=0
+          MAX_CONN_RETRIES=5
+          while [ $CONN_RETRIES -lt $MAX_CONN_RETRIES ]; do
+              if nc -z -w 5 "$TAILSCALE_IP" 3389; then
+                  echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
+                  break
+              else
+                  echo "محاولة $((CONN_RETRIES+1))/$MAX_CONN_RETRIES: فشل الاتصال TCP على منفذ RDP 3389"
+                  CONN_RETRIES=$((CONN_RETRIES+1))
+                  sleep 10
+              fi
+          done
+          
+          if [ $CONN_RETRIES -eq $MAX_CONN_RETRIES ]; then
+              echo "تحذير: فشل جميع محاولات الاتصال TCP على منفذ RDP 3389"
           fi
 
       - name: Maintain Connection
@@ -105,8 +129,19 @@ jobs:
           echo "=================="
           echo ""
           
-          # إبقاء العدّاد نشطاً
+          # التحقق من اتصال Tailscale بشكل دوري
           while true; do
-              echo "[$(date)] الاتصال نشط - استخدم Ctrl+C في سير العمل للإنهاء"
+              TS_STATUS=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale status 2>/dev/null || echo "غير متصل")
+              TS_IP_CURRENT=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo "")
+              
+              echo "[$(date)] حالة الاتصال: $TS_STATUS, IP: $TS_IP_CURRENT"
+              
+              if [ -z "$TS_IP_CURRENT" ] || [ "$TS_STATUS" = "غير متصل" ]; then
+                  echo "إعادة الاتصال بـ Tailscale..."
+                  sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
+                    --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
+                    --hostname=gh-mac-runner-$GITHUB_RUN_ID --reset
+              fi
+              
               sleep 300
           done
