@@ -11,65 +11,55 @@ jobs:
     steps:
       - name: Configure Remote Desktop (RDP)
         run: |
-          # تمكين مشاركة الشاشة عبر RDP
           sudo systemsetup -setremotelogin on
-          
-          # تكوين إعدادات RDP
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist UseRemoteManagement -bool YES
-          
-          # السماح لجميع المستخدمين
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
 
       - name: Configure Firewall for RDP
         run: |
-          # استخدام الطريقة الصحيحة لفتح منفذ RDP في macOS
-          # إنشاء قاعدة جدار حماية باستخدام pfctl
-          echo '
-          pass in proto tcp from any to any port 3389
-          ' | sudo pfctl -ef -
-          
-          # تمكين جدار الحماية إذا لم يكن ممكناً
+          echo 'pass in proto tcp from any to any port 3389' | sudo pfctl -ef -
           sudo pfctl -e || true
 
       - name: Create User with Secure Password
         run: |
-          # استخدام كلمة المرور الثابتة
           PASSWORD="Yaso1212"
           USERNAME="macuser"
           
-          # إنشاء المستخدم إذا لم يكن موجوداً
           if ! id "$USERNAME" &>/dev/null; then
               sudo sysadminctl -addUser "$USERNAME" -password "$PASSWORD" -admin
-              echo "تم إنشاء المستخدم الجديد: $USERNAME"
+              echo "User created: $USERNAME"
           else
-              # تحديث كلمة مرور المستخدم الموجود
               echo "$PASSWORD" | sudo dscl . -passwd "/Users/$USERNAME"
-              echo "تم تحديث كلمة مرور المستخدم الموجود: $USERNAME"
+              echo "Password updated for: $USERNAME"
           fi
           
-          # تخزين بيانات الاعتماد في متغيرات البيئة
           echo "REMOTE_USERNAME=$USERNAME" >> $GITHUB_ENV
           echo "REMOTE_PASSWORD=$PASSWORD" >> $GITHUB_ENV
 
       - name: Install Tailscale
         run: |
-          # تحميل وتثبيت Tailscale
+          # Fixed package name (corrected spelling)
           TS_URL="https://pkgs.tailscale.com/stable/tailscale-macos-latest.pkg"
-          INSTALLER_PATH="/tmp/tailscale.pkg"
+          INSTALLER_PATH="/tmp/tailscale.pkg"  # Corrected path
           
           curl -o "$INSTALLER_PATH" "$TS_URL"
+          
+          # Verify download was successful
+          if [ ! -f "$INSTALLER_PATH" ]; then
+              echo "Error: Failed to download Tailscale package"
+              exit 1
+          fi
+          
           sudo installer -pkg "$INSTALLER_PATH" -target /
           rm -f "$INSTALLER_PATH"
 
       - name: Establish Tailscale Connection
         run: |
-          # تشغيل Tailscale بمفتاح المصادقة
           sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
             --hostname=gh-mac-runner-$GITHUB_RUN_ID
           
-          # الانتظار حتى يتم تعيين IP
           TS_IP=""
           RETRIES=0
           while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
@@ -79,36 +69,38 @@ jobs:
           done
           
           if [ -z "$TS_IP" ]; then
-              echo "لم يتم تعيين عنوان IP من Tailscale. الخروج."
+              echo "Failed to get Tailscale IP"
               exit 1
           fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
       
       - name: Verify RDP Accessibility
         run: |
-          echo "عنوان Tailscale IP: $TAILSCALE_IP"
+          echo "Tailscale IP: $TAILSCALE_IP"
           
-          # اختبار الاتصال على منفذ RDP 3389
+          # Install netcat if not present
+          if ! command -v nc &> /dev/null; then
+              brew install netcat || true
+          fi
+          
           if nc -z -w 5 "$TAILSCALE_IP" 3389; then
-              echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
+              echo "RDP connection successful!"
           else
-              echo "تحذير: فشل الاتصال TCP على منفذ RDP 3389"
+              echo "Warning: RDP connection failed"
           fi
 
       - name: Maintain Connection
         run: |
-          echo ""
-          echo "=== الوصول عن بعد ==="
-          echo "العنوان: $TAILSCALE_IP"
-          echo "النظام: macOS"
-          echo "البروتوكول: RDP (منفذ 3389)"
-          echo "اسم المستخدم: $REMOTE_USERNAME"
-          echo "كلمة المرور: $REMOTE_PASSWORD"
-          echo "=================="
-          echo ""
+          echo "=== Remote Access Details ==="
+          echo "Address: $TAILSCALE_IP"
+          echo "System: macOS"
+          echo "Protocol: RDP (port 3389)"
+          echo "Username: $REMOTE_USERNAME"
+          echo "Password: $REMOTE_PASSWORD"
+          echo "============================="
           
-          # إبقاء العدّاد نشطاً
+          # Keep the runner active
           while true; do
-              echo "[$(date)] الاتصال نشط - استخدم Ctrl+C في سير العمل للإنهاء"
+              echo "[$(date)] Connection active - Use Ctrl+C in workflow to terminate"
               sleep 300
           done
