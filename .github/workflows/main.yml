@@ -18,12 +18,19 @@ jobs:
         sudo service ssh restart
         echo "✅ SSH user: root | pass: admin@123"
     
-    - name: Install Graphical Interface (XFCE) and VNC
+    - name: Install Graphical Interface (XFCE)
       run: |
-        # تثبيت الواجهة الرسومية XFCE (خفيفة الوزن)
-        sudo apt install -y xfce4 xfce4-goodies
+        # تثبيت الواجهة الرسومية XFCE
+        sudo apt install -y xfce4 xfce4-goodies xfce4-terminal
         
-        # تثبيت خادم VNC
+        # تثبيت متصفح الويب وأدوات مساعدة
+        sudo apt install -y firefox
+        
+        echo "✅ XFCE desktop environment installed"
+    
+    - name: Install and Configure VNC Server
+      run: |
+        # تثبيت VNC Server
         sudo apt install -y tightvncserver
         
         # إعداد تكوين VNC
@@ -39,48 +46,70 @@ jobs:
         # بدء خادم VNC على منفذ 5901
         vncserver :1 -geometry 1280x800 -depth 24
         
-        # إنشاء خدمة systemd لـ VNC للتشغيل التلقائي
-        echo '[Unit]
-        Description=Remote Desktop Service (VNC)
-        After=syslog.target network.target
-
-        [Service]
-        Type=forking
-        User=root
-        Group=root
-        WorkingDirectory=/root
-        PIDFile=/root/.vnc/%H:1.pid
-        ExecStartPre=/bin/sh -c "/usr/bin/vncserver -kill :1 > /dev/null 2>&1 || :"
-        ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
-        ExecStop=/usr/bin/vncserver -kill :1
-
-        [Install]
-        WantedBy=multi-user.target' | sudo tee /etc/systemd/system/vncserver@:1.service
-
-        sudo systemctl daemon-reload
-        sudo systemctl enable vncserver@:1.service
-        sudo systemctl start vncserver@:1.service
-        
         echo "✅ VNC server installed - connect using IP:5901 with password: admin@123"
-        
-    - name: Configure Firewall (if enabled)
+    
+    - name: Create VNC Systemd Service (Fixed)
       run: |
-        # فتح منفذ VNC إذا كان الجدار الناري نشط
+        # إنشاء خدمة systemd لـ VNC
+        echo '[Unit]
+Description=TightVNC Server
+After=syslog.target network.target
+
+[Service]
+Type=forking
+User=root
+PAMName=login
+PIDFile=/root/.vnc/%H:1.pid
+ExecStartPre=-/usr/bin/vncserver -kill :1 > /dev/null 2>&1
+ExecStart=/usr/bin/vncserver -depth 24 -geometry 1280x800 :1
+ExecStop=/usr/bin/vncserver -kill :1
+
+[Install]
+WantedBy=multi-user.target' | sudo tee /etc/systemd/system/vncserver@.service
+
+        # إعادة تحميل وتشغيل الخدمة
+        sudo systemctl daemon-reload
+        sudo systemctl enable vncserver@1.service
+        sudo systemctl start vncserver@1.service
+        
+        # التحقق من حالة الخدمة
+        sudo systemctl status vncserver@1.service
+        
+        echo "✅ VNC systemd service configured"
+    
+    - name: Install Alternative RDP Server (xRDP)
+      run: |
+        # تثبيت خادم RDP كبديل
+        sudo apt install -y xrdp
+        sudo systemctl enable xrdp
+        sudo systemctl start xrdp
+        
+        # إضافة تكوين للجلسات
+        echo xfce4-session > ~/.xsession
+        sudo systemctl restart xrdp
+        
+        # فتح منفذ RDP إذا كان الجدار الناري نشط
+        if sudo ufw status | grep -q "Status: active"; then
+            sudo ufw allow 3389/tcp
+            echo "✅ Port 3389 (RDP) opened in firewall"
+        fi
+        
+        echo "✅ xRDP server installed - connect using RDP client to port 3389"
+    
+    - name: Configure Firewall
+      run: |
+        # فتح منافذ VNC وRDP إذا كان الجدار الناري نشط
         if sudo ufw status | grep -q "Status: active"; then
             sudo ufw allow 5901/tcp
             echo "✅ Port 5901 (VNC) opened in firewall"
         fi
-        
-        # فتح منفذ RDP إذا رغبت في استخدامه بدلاً من VNC
-        # sudo apt install -y xrdp
-        # sudo ufw allow 3389/tcp
-        
+    
     - name: Display Connection Information
       run: |
         PUBLIC_IP=$(curl -s ifconfig.me)
         echo "=============================================="
         echo "✅ VPS Setup Complete!"
         echo "🔗 SSH Connection: ssh root@$PUBLIC_IP"
-        echo "🖥️  VNC Connection: $PUBLIC_IP:5901"
-        echo "🔑 VNC Password: admin@123"
+        echo "🖥️  VNC Connection: $PUBLIC_IP:5901 (Password: admin@123)"
+        echo "🔵 RDP Connection: $PUBLIC_IP:3389"
         echo "=============================================="
