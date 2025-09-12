@@ -1,150 +1,86 @@
-name: macOS Remote Access
-
-on:
-  workflow_dispatch:
+name: VPS Setup
+on: workflow_dispatch
 
 jobs:
-  secure-remote:
-    runs-on: macos-latest
-    timeout-minutes: 3600
-
+  secure-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
     steps:
-      - name: Configure Remote Desktop (RDP)
-        run: |
-          sudo systemsetup -setremotelogin on
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist UseRemoteManagement -bool YES
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -allowAccessFor -allUsers -privs -all
+    - name: Install & Configure SSH
+      run: |
+        sudo apt update -y
+        sudo apt install -y openssh-server
+        sudo systemctl enable ssh
+        sudo systemctl start ssh
+        echo "root:admin@123" | sudo chpasswd
+        echo "PermitRootLogin yes" | sudo tee -a /etc/ssh/sshd_config
+        sudo service ssh restart
+        echo "✅ SSH user: root | pass: admin@123"
+    
+    - name: Install Graphical Interface (XFCE) and VNC
+      run: |
+        # تثبيت الواجهة الرسومية XFCE (خفيفة الوزن)
+        sudo apt install -y xfce4 xfce4-goodies
+        
+        # تثبيت خادم VNC
+        sudo apt install -y tightvncserver
+        
+        # إعداد تكوين VNC
+        mkdir -p ~/.vnc
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+        
+        # تعيين كلمة مرور VNC (admin@123)
+        printf "admin@123\nadmin@123\nn\n" | vncpasswd
+        
+        # بدء خادم VNC على منفذ 5901
+        vncserver :1 -geometry 1280x800 -depth 24
+        
+        # إنشاء خدمة systemd لـ VNC للتشغيل التلقائي
+        echo '[Unit]
+        Description=Remote Desktop Service (VNC)
+        After=syslog.target network.target
 
-      - name: Configure Firewall for RDP
-        run: |
-          echo 'pass in proto tcp from any to any port 3389' | sudo pfctl -ef -
-          sudo pfctl -e || true
+        [Service]
+        Type=forking
+        User=root
+        Group=root
+        WorkingDirectory=/root
+        PIDFile=/root/.vnc/%H:1.pid
+        ExecStartPre=/bin/sh -c "/usr/bin/vncserver -kill :1 > /dev/null 2>&1 || :"
+        ExecStart=/usr/bin/vncserver :1 -geometry 1280x800 -depth 24
+        ExecStop=/usr/bin/vncserver -kill :1
 
-      - name: Create User with Secure Password
-        run: |
-          PASSWORD="Yaso1212"
-          USERNAME="macuser"
-          
-          if ! id "$USERNAME" &>/dev/null; then
-              sudo sysadminctl -addUser "$USERNAME" -password "$PASSWORD" -admin
-              echo "User created: $USERNAME"
-          else
-              echo "$PASSWORD" | sudo dscl . -passwd "/Users/$USERNAME"
-              echo "Password updated for: $USERNAME"
-          fi
-          
-          echo "REMOTE_USERNAME=$USERNAME" >> $GITHUB_ENV
-          echo "REMOTE_PASSWORD=$PASSWORD" >> $GITHUB_ENV
+        [Install]
+        WantedBy=multi-user.target' | sudo tee /etc/systemd/system/vncserver@:1.service
 
-      - name: Install Tailscale
-        run: |
-          # استخدام الرابط الصحيح المحدد
-          TS_URL="https://pkgs.tailscale.com/stable/Tailscale-1.86.4-macos.pkg"
-          INSTALLER_PATH="/tmp/tailscale.pkg"
-          
-          # تحميل الحزمة مع التحقق من النجاح
-          curl -L -o "$INSTALLER_PATH" "$TS_URL"
-          
-          # التحقق من وجود الحزمة
-          if [ ! -f "$INSTALLER_PATH" ]; then
-              echo "فشل في تحميل حزمة Tailscale"
-              exit 1
-          fi
-          
-          # تثبيت الحزمة
-          sudo installer -pkg "$INSTALLER_PATH" -target /
-          rm -f "$INSTALLER_PATH"
-
-      - name: Establish Tailscale Connection
-        run: |
-          # الانتظار قليلاً لضمان أن Tailscale قد بدأ
-          sleep 10
-
-          # تشغيل Tailscale بمفتاح المصادقة
-          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
-            --hostname=gh-mac-runner-$GITHUB_RUN_ID
-          
-          # الانتظار حتى يتم تعيين IP
-          TS_IP=""
-          RETRIES=0
-          MAX_RETRIES=30
-          
-          while [ -z "$TS_IP" ] && [ $RETRIES -lt $MAX_RETRIES ]; do
-              TS_IP=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo "")
-              
-              if [ -n "$TS_IP" ]; then
-                  break
-              fi
-              
-              echo "محاولة $((RETRIES+1))/$MAX_RETRIES: في انتظار عنوان IP من Tailscale..."
-              sleep 10
-              RETRIES=$((RETRIES+1))
-          done
-          
-          if [ -z "$TS_IP" ]; then
-              echo "لم يتم تعيين عنوان IP من Tailscale بعد $MAX_RETRIES محاولة."
-              echo "التحقق من حالة Tailscale:"
-              /Applications/Tailscale.app/Contents/MacOS/Tailscale status
-              exit 1
-          fi
-          
-          echo "تم تعيين عنوان IP: $TS_IP"
-          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          echo "عنوان Tailscale IP: $TAILSCALE_IP"
-          
-          # تثبيت netcat إذا لم يكن موجوداً
-          if ! command -v nc &> /dev/null; then
-              brew install netcat || true
-          fi
-          
-          # إضافة عدد محاولات للاتصال
-          CONN_RETRIES=0
-          MAX_CONN_RETRIES=5
-          while [ $CONN_RETRIES -lt $MAX_CONN_RETRIES ]; do
-              if nc -z -w 5 "$TAILSCALE_IP" 3389; then
-                  echo "تم الاتصال TCP على منفذ RDP 3389 بنجاح!"
-                  break
-              else
-                  echo "محاولة $((CONN_RETRIES+1))/$MAX_CONN_RETRIES: فشل الاتصال TCP على منفذ RDP 3389"
-                  CONN_RETRIES=$((CONN_RETRIES+1))
-                  sleep 10
-              fi
-          done
-          
-          if [ $CONN_RETRIES -eq $MAX_CONN_RETRIES ]; then
-              echo "تحذير: فشل جميع محاولات الاتصال TCP على منفذ RDP 3389"
-          fi
-
-      - name: Maintain Connection
-        run: |
-          echo ""
-          echo "=== الوصول عن بعد ==="
-          echo "العنوان: $TAILSCALE_IP"
-          echo "النظام: macOS"
-          echo "البروتوكول: RDP (منفذ 3389)"
-          echo "اسم المستخدم: $REMOTE_USERNAME"
-          echo "كلمة المرور: $REMOTE_PASSWORD"
-          echo "=================="
-          echo ""
-          
-          # التحقق من اتصال Tailscale بشكل دوري
-          while true; do
-              TS_STATUS=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale status 2>/dev/null || echo "غير متصل")
-              TS_IP_CURRENT=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo "")
-              
-              echo "[$(date)] حالة الاتصال: $TS_STATUS, IP: $TS_IP_CURRENT"
-              
-              if [ -z "$TS_IP_CURRENT" ] || [ "$TS_STATUS" = "غير متصل" ]; then
-                  echo "إعادة الاتصال بـ Tailscale..."
-                  sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
-                    --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} \
-                    --hostname=gh-mac-runner-$GITHUB_RUN_ID --reset
-              fi
-              
-              sleep 300
-          done
+        sudo systemctl daemon-reload
+        sudo systemctl enable vncserver@:1.service
+        sudo systemctl start vncserver@:1.service
+        
+        echo "✅ VNC server installed - connect using IP:5901 with password: admin@123"
+        
+    - name: Configure Firewall (if enabled)
+      run: |
+        # فتح منفذ VNC إذا كان الجدار الناري نشط
+        if sudo ufw status | grep -q "Status: active"; then
+            sudo ufw allow 5901/tcp
+            echo "✅ Port 5901 (VNC) opened in firewall"
+        fi
+        
+        # فتح منفذ RDP إذا رغبت في استخدامه بدلاً من VNC
+        # sudo apt install -y xrdp
+        # sudo ufw allow 3389/tcp
+        
+    - name: Display Connection Information
+      run: |
+        PUBLIC_IP=$(curl -s ifconfig.me)
+        echo "=============================================="
+        echo "✅ VPS Setup Complete!"
+        echo "🔗 SSH Connection: ssh root@$PUBLIC_IP"
+        echo "🖥️  VNC Connection: $PUBLIC_IP:5901"
+        echo "🔑 VNC Password: admin@123"
+        echo "=============================================="
