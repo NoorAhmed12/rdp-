@@ -13,25 +13,28 @@ jobs:
         sudo apt install -y openssh-server
         sudo systemctl enable ssh
         sudo systemctl start ssh
-        echo "root:admin@123" | sudo chpasswd
+        echo "root:admin12345" | sudo chpasswd  # Changed to 8+ chars
         echo "PermitRootLogin yes" | sudo tee -a /etc/ssh/sshd_config
         sudo service ssh restart
-        echo "✅ SSH user: root | pass: admin@123"
+        echo "✅ SSH user: root | pass: admin12345"
+    
+    - name: Switch to root user
+      run: |
+        # سنعمل كـ root لتجنب مشاكل الصلاحيات
+        sudo -i
     
     - name: Install Graphical Interface (XFCE)
       run: |
         # تثبيت الواجهة الرسومية XFCE
-        sudo apt install -y xfce4 xfce4-goodies xfce4-terminal
-        
-        # تثبيت متصفح الويب وأدوات مساعدة
-        sudo apt install -y firefox
+        apt update -y
+        apt install -y xfce4 xfce4-goodies xfce4-terminal firefox
         
         echo "✅ XFCE desktop environment installed"
     
     - name: Install and Configure VNC Server
       run: |
         # تثبيت VNC Server
-        sudo apt install -y tightvncserver
+        apt install -y tightvncserver
         
         # إعداد تكوين VNC
         mkdir -p ~/.vnc
@@ -40,69 +43,66 @@ jobs:
         startxfce4 &' > ~/.vnc/xstartup
         chmod +x ~/.vnc/xstartup
         
-        # تعيين كلمة مرور VNC (admin@123)
-        printf "admin@123\nadmin@123\nn\n" | vncpasswd
+        # تعيين كلمة مرور VNC (8 أحرف على الأقل)
+        printf "admin12345\nadmin12345\nn\n" | vncpasswd
         
-        # بدء خادم VNC على منفذ 5901
-        vncserver :1 -geometry 1280x800 -depth 24
-        
-        echo "✅ VNC server installed - connect using IP:5901 with password: admin@123"
+        echo "✅ VNC server configured"
     
-    - name: Create VNC Systemd Service (Fixed)
+    - name: Create VNC Systemd Service
       run: |
         # إنشاء خدمة systemd لـ VNC
-        echo '[Unit]
-Description=TightVNC Server
+        cat > /etc/systemd/system/vncserver.service << 'EOF'
+[Unit]
+Description=Remote Desktop VNC Service
 After=syslog.target network.target
 
 [Service]
 Type=forking
 User=root
-PAMName=login
+WorkingDirectory=/root
 PIDFile=/root/.vnc/%H:1.pid
 ExecStartPre=-/usr/bin/vncserver -kill :1 > /dev/null 2>&1
 ExecStart=/usr/bin/vncserver -depth 24 -geometry 1280x800 :1
 ExecStop=/usr/bin/vncserver -kill :1
 
 [Install]
-WantedBy=multi-user.target' | sudo tee /etc/systemd/system/vncserver@.service
-
-        # إعادة تحميل وتشغيل الخدمة
-        sudo systemctl daemon-reload
-        sudo systemctl enable vncserver@1.service
-        sudo systemctl start vncserver@1.service
+WantedBy=multi-user.target
+EOF
         
-        # التحقق من حالة الخدمة
-        sudo systemctl status vncserver@1.service
+        # إعادة تحميل وتشغيل الخدمة
+        systemctl daemon-reload
+        systemctl enable vncserver.service
         
         echo "✅ VNC systemd service configured"
+    
+    - name: Start VNC Server manually
+      run: |
+        # بدء VNC يدوياً للتأكد من عمله
+        vncserver :1 -geometry 1280x800 -depth 24
+        echo "✅ VNC server started manually on port 5901"
     
     - name: Install Alternative RDP Server (xRDP)
       run: |
         # تثبيت خادم RDP كبديل
-        sudo apt install -y xrdp
-        sudo systemctl enable xrdp
-        sudo systemctl start xrdp
+        apt install -y xrdp
+        systemctl enable xrdp
+        systemctl start xrdp
         
         # إضافة تكوين للجلسات
         echo xfce4-session > ~/.xsession
-        sudo systemctl restart xrdp
-        
-        # فتح منفذ RDP إذا كان الجدار الناري نشط
-        if sudo ufw status | grep -q "Status: active"; then
-            sudo ufw allow 3389/tcp
-            echo "✅ Port 3389 (RDP) opened in firewall"
-        fi
+        systemctl restart xrdp
         
         echo "✅ xRDP server installed - connect using RDP client to port 3389"
     
     - name: Configure Firewall
       run: |
-        # فتح منافذ VNC وRDP إذا كان الجدار الناري نشط
-        if sudo ufw status | grep -q "Status: active"; then
-            sudo ufw allow 5901/tcp
-            echo "✅ Port 5901 (VNC) opened in firewall"
-        fi
+        # تثبيت وتكوين الجدار الناري
+        apt install -y ufw
+        ufw allow ssh
+        ufw allow 3389/tcp  # RDP
+        ufw allow 5901/tcp  # VNC
+        echo "y" | ufw enable
+        echo "✅ Firewall configured with open ports for SSH, RDP and VNC"
     
     - name: Display Connection Information
       run: |
@@ -110,6 +110,9 @@ WantedBy=multi-user.target' | sudo tee /etc/systemd/system/vncserver@.service
         echo "=============================================="
         echo "✅ VPS Setup Complete!"
         echo "🔗 SSH Connection: ssh root@$PUBLIC_IP"
-        echo "🖥️  VNC Connection: $PUBLIC_IP:5901 (Password: admin@123)"
+        echo "🔑 SSH Password: admin12345"
+        echo "🖥️  VNC Connection: $PUBLIC_IP:5901"
+        echo "🔑 VNC Password: admin12345"
         echo "🔵 RDP Connection: $PUBLIC_IP:3389"
+        echo "🔑 RDP Username: root | Password: admin12345"
         echo "=============================================="
